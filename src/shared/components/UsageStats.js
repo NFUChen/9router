@@ -59,12 +59,17 @@ function RecentRequests({ requests = [] }) {
                 <th className="py-1.5 text-left font-semibold text-text-muted w-2"></th>
                 <th className="py-1.5 text-left font-semibold text-text-muted">Model</th>
                 <th className="py-1.5 text-right font-semibold text-text-muted whitespace-nowrap">In / Cache / Out</th>
+                <th className="py-1.5 pl-2 text-right font-semibold text-text-muted whitespace-nowrap">Cache %</th>
                 <th className="py-1.5 text-right font-semibold text-text-muted">When</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
               {requests.map((r, i) => {
                 const ok = !r.status || r.status === "ok" || r.status === "success";
+                // prompt tokens are cache-inclusive, so cached / prompt is the hit rate
+                const cacheRate = r.cachedTokens && r.promptTokens
+                  ? Math.min(100, Math.round((r.cachedTokens / r.promptTokens) * 100))
+                  : null;
                 return (
                   <tr key={i} className="hover:bg-bg-subtle transition-colors">
                     <td className="py-1.5">
@@ -80,6 +85,9 @@ function RecentRequests({ requests = [] }) {
                       </span>
                       {" "}
                       <span className="text-success">{fmt(r.completionTokens)}↓</span>
+                    </td>
+                    <td className="py-1.5 pl-2 text-right whitespace-nowrap text-info" title="Cache read / input tokens">
+                      {cacheRate === null ? "—" : `${cacheRate}%`}
                     </td>
                     <td className="py-1.5 text-right text-text-muted whitespace-nowrap"><TimeAgo timestamp={r.timestamp} /></td>
                   </tr>
