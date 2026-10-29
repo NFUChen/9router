@@ -50,6 +50,10 @@ describe("isOutputChunk", () => {
     expect(isOutputChunk({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"a\"" } })).toBe(true);
   });
 
+  it("detects a Claude content_block_start, which opens hidden thinking", () => {
+    expect(isOutputChunk({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } })).toBe(true);
+  });
+
   it("ignores Responses response.created", () => {
     expect(isOutputChunk({ type: "response.created", response: { id: "resp_1" } })).toBe(false);
   });
@@ -130,7 +134,29 @@ describe("stream output timing", () => {
     expect(timing.maxGapMs).toBe(2000);
   });
 
-  it("measures translated Claude streams on content_block_delta", async () => {
+  // Shape captured from claude-opus-5-5 with redacted thinking: the thinking block
+  // opens right after message_start, its 610 tokens are generated invisibly, and the
+  // only thinking delta (empty + signature) arrives ~5s later together with the tool
+  // call. output_tokens counts the thinking, so the window must open at the block start.
+  it("opens the window at the Claude block start when thinking is redacted", async () => {
+    const holder = {};
+    holder.transform = createSSETransformStreamWithLogger(
+      FORMATS.CLAUDE, FORMATS.CLAUDE, "claude", null, null, "m", null, null, (...args) => holder.onComplete(...args),
+    );
+    const timing = await runTimed(holder, [
+      [676, `event: message_start\n${sse({ type: "message_start", message: { id: "msg_1", role: "assistant", model: "m", usage: { input_tokens: 1, output_tokens: 0 } } })}` +
+        `event: content_block_start\n${sse({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } })}`],
+      [5586, `event: content_block_delta\n${sse({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "" } })}` +
+        `event: content_block_delta\n${sse({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } })}` +
+        `event: content_block_stop\n${sse({ type: "content_block_stop", index: 0 })}` +
+        `event: content_block_start\n${sse({ type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_1", name: "w", input: {} } })}`],
+      [8900, `event: content_block_delta\n${sse({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: "{}" } })}`],
+      [8918, `event: message_stop\n${sse({ type: "message_stop" })}`],
+    ]);
+    expect(timing.firstTokenAt).toBe(676);
+  });
+
+  it("measures translated Claude streams from the first content block", async () => {
     const holder = {};
     holder.transform = createSSETransformStreamWithLogger(
       FORMATS.CLAUDE, FORMATS.OPENAI, "claude", null, null, "m", null, null, (...args) => holder.onComplete(...args),
@@ -142,7 +168,7 @@ describe("stream output timing", () => {
       [1900, `event: content_block_delta\n${sse({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "b" } })}`],
       [2000, `event: message_stop\n${sse({ type: "message_stop" })}`],
     ]);
-    expect(timing).toEqual({ firstTokenAt: 1400, lastTokenAt: 1900, maxGapMs: 500 });
+    expect(timing).toEqual({ firstTokenAt: 1200, lastTokenAt: 1900, maxGapMs: 500 });
   });
 
   it("falls back to the first byte when no chunk is recognised as output", async () => {

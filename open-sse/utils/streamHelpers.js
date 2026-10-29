@@ -70,7 +70,8 @@ export function hasValuableContent(chunk, format) {
 const nonEmpty = (v) => typeof v === "string" ? v.length > 0 : Array.isArray(v) && v.length > 0;
 
 // True when a parsed upstream chunk carries generated output (text, thinking or
-// tool-call arguments), in any provider format. Role-only openers, message_start,
+// tool-call arguments, or a Claude block that will carry them), in any provider
+// format. Role-only openers, message_start,
 // response.created, pings and usage trailers are not output — stream timing
 // (TTFT, tok/s, max gap) is measured on output chunks only.
 export function isOutputChunk(chunk) {
@@ -83,7 +84,10 @@ export function isOutputChunk(chunk) {
            nonEmpty(delta.reasoning) || nonEmpty(delta.tool_calls);
   }
 
-  // Claude
+  // Claude. A block start counts: with redacted thinking the thinking block opens
+  // as soon as generation starts, but its tokens (billed in output_tokens) never
+  // stream — the only delta is the signature when thinking ends.
+  if (chunk.type === CLAUDE_EVENT.CONTENT_BLOCK_START) return true;
   if (chunk.type === CLAUDE_EVENT.CONTENT_BLOCK_DELTA) {
     const d = chunk.delta || {};
     return nonEmpty(d.text) || nonEmpty(d.thinking) || nonEmpty(d.partial_json);
