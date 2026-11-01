@@ -50,6 +50,7 @@ function normalizeCapEntry(entry) {
 const STRATEGY_OPTIONS = [
   { value: "fallback", label: "Fallback — try in order" },
   { value: "round-robin", label: "Round Robin — rotate" },
+  { value: "session-round-robin", label: "Session Round Robin" },
   { value: "smart", label: "Smart Router — System One" },
   { value: "fusion", label: "Fusion — panel + judge" },
 ];
@@ -399,6 +400,7 @@ export default function CombosPage() {
           <ul className="text-sm text-text-muted mt-2 flex flex-col gap-1">
             <li><span className="font-medium text-text-main">Fallback</span> — tries models in order (next on failure)</li>
             <li><span className="font-medium text-text-main">Round Robin</span> — rotates models across requests to spread load</li>
+            <li><span className="font-medium text-text-main">Session Round Robin</span> — each new session takes the next model in the list, then stays on it for every turn (keeps prompt cache warm)</li>
             <li><span className="font-medium text-text-main">Smart Router</span> — queries a System One decision model to pick the optimal model before generation; supports Smart Switch (adaptive hysteresis), Strict Lock (1 task = 1 session, +0ms latency), and Per-Turn modes to maximize prompt-cache retention</li>
             <li><span className="font-medium text-text-main">Fusion</span> — queries all models in parallel, then a judge synthesizes one answer. Best quality, but costs the most: every request bills all panel models + the judge (N+1 calls)</li>
           </ul>

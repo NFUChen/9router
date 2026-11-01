@@ -341,7 +341,7 @@ export function isZeroContentResponse(data) {
  * @param {Function} options.handleSingleModel - Function to handle single model: (body, modelStr) => Promise<Response>
  * @param {Object} options.log - Logger object
  * @param {string} [options.comboName] - Name of the combo (for round-robin tracking)
- * @param {string} [options.comboStrategy] - Strategy: "fallback", "round-robin", or "smart"
+ * @param {string} [options.comboStrategy] - Strategy: "fallback", "round-robin", "session-round-robin", or "smart"
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
  * @param {boolean} [options.autoSwitch=true] - Capability auto-switching
  * @param {string|null} [options.sessionId=null] - Client session identifier for prompt cache retention
@@ -368,6 +368,8 @@ export async function handleComboChat({
 }) {
   let rotatedModels = models;
   let activeStickyModel = null;
+  // Strategies that pin a session to one model; a failure on that model releases the pin.
+  const usesSessionSticky = comboStrategy === "smart" || comboStrategy === "session-round-robin";
 
   if (comboStrategy === "smart") {
     const policy = (typeof smartPolicy === "string" ? smartPolicy : "smart").toLowerCase();
@@ -446,6 +448,19 @@ export async function handleComboChat({
         log.warn("COMBO", `smart-router error, fallback to order: [${models.join(", ")}]`, { error: err?.message || String(err) });
       }
     }
+  } else if (comboStrategy === "session-round-robin") {
+    // Each new session takes the next model in rotation and keeps it for every later
+    // turn (warm prompt cache). Without a session id this degrades to per-request round-robin.
+    activeStickyModel = getStickyComboModel(comboName, sessionId, models);
+    if (activeStickyModel) {
+      rotatedModels = [activeStickyModel, ...models.filter((m) => m !== activeStickyModel)];
+      log.info("COMBO", `session-round-robin retained session "${sessionId}" → ${activeStickyModel}`);
+    } else {
+      rotatedModels = getRotatedModels(models, comboName, "round-robin", 1);
+      activeStickyModel = rotatedModels[0];
+      setStickyComboModel(comboName, sessionId, activeStickyModel);
+      log.info("COMBO", `session-round-robin assigned session "${sessionId}" → ${activeStickyModel}`);
+    }
   } else {
     // Apply rotation strategy if enabled
     rotatedModels = getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
@@ -506,7 +521,7 @@ export async function handleComboChat({
                 const peekBody = await result.clone().json();
                 if (isZeroContentResponse(peekBody)) {
                   log.warn("COMBO", `Model ${modelStr} returned HTTP 200 with zero usable content, falling back to next model`);
-                  if (comboStrategy === "smart" && sessionId && modelStr === activeStickyModel) {
+                  if (usesSessionSticky && sessionId && modelStr === activeStickyModel) {
                     clearStickyComboSession(comboName, sessionId);
                   }
                   lastError = "Zero usable content";
@@ -539,7 +554,7 @@ export async function handleComboChat({
         }
 
         log.warn("COMBO", `Model ${modelStr} returned empty (${reasonLabel}) — falling through to next candidate`);
-        if (comboStrategy === "smart" && sessionId && modelStr === activeStickyModel) {
+        if (usesSessionSticky && sessionId && modelStr === activeStickyModel) {
           clearStickyComboSession(comboName, sessionId);
         }
         // Drain/close the discarded stream in the background so its usage logging still runs.
@@ -550,7 +565,7 @@ export async function handleComboChat({
       }
 
       // If the model that failed was the session-sticky model, clear it so next turns re-evaluate
-      if (comboStrategy === "smart" && sessionId && modelStr === activeStickyModel) {
+      if (usesSessionSticky && sessionId && modelStr === activeStickyModel) {
         clearStickyComboSession(comboName, sessionId);
       }
 
@@ -614,7 +629,7 @@ export async function handleComboChat({
       log.warn("COMBO", `Model ${modelStr} failed, trying next`, { status: result.status });
     } catch (error) {
       // Catch unexpected exceptions to ensure fallback continues
-      if (comboStrategy === "smart" && sessionId && modelStr === activeStickyModel) {
+      if (usesSessionSticky && sessionId && modelStr === activeStickyModel) {
         clearStickyComboSession(comboName, sessionId);
       }
       lastError = error.message || String(error);
