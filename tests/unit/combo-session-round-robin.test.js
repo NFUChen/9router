@@ -77,13 +77,42 @@ describe("session-round-robin combo strategy", () => {
     expect(calls.at(-1)).toBe("ag/astra");
   });
 
-  it("falls back to the next model and releases the session when the assigned model fails", async () => {
+  it("falls back to the next model when the assigned model fails", async () => {
     const { calls, handleSingleModel } = makeHandler(new Set(["cc/opus"]));
 
     const res = await send(handleSingleModel, "s1");
 
     expect(res.ok).toBe(true);
     expect(calls).toEqual(["cc/opus", "ag/astra"]);
+  });
+
+  it("re-pins the session to the fallback model that served the turn", async () => {
+    const { handleSingleModel } = makeHandler(new Set(["cc/opus"]));
+
+    await send(handleSingleModel, "s1");
+
+    expect(getStickyComboModel(COMBO, "s1", MODELS)).toBe("ag/astra");
+  });
+
+  it("keeps later turns on the fallback model instead of re-entering the rotation", async () => {
+    const failing = new Set(["cc/opus"]);
+    const { calls, handleSingleModel } = makeHandler(failing);
+
+    await send(handleSingleModel, "s1");
+    failing.clear();
+    await send(handleSingleModel, "s2");
+    calls.length = 0;
+    await send(handleSingleModel, "s1");
+    await send(handleSingleModel, "s1");
+
+    expect(calls).toEqual(["ag/astra", "ag/astra"]);
+  });
+
+  it("leaves the session unpinned when every model fails", async () => {
+    const { handleSingleModel } = makeHandler(new Set(MODELS));
+
+    await send(handleSingleModel, "s1");
+
     expect(getStickyComboModel(COMBO, "s1", MODELS)).toBeNull();
   });
 
