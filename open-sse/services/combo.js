@@ -483,6 +483,15 @@ export async function handleComboChat({
   let lastStatus = null;
   let requestScopedResult = null;
 
+  // session-round-robin: if the session's pinned model failed this turn (pin released),
+  // pin the fallback that served it so later turns stay there instead of re-entering rotation.
+  const repinServedModel = (modelStr) => {
+    if (comboStrategy !== "session-round-robin" || !sessionId) return;
+    if (getStickyComboModel(comboName, sessionId, models)) return;
+    setStickyComboModel(comboName, sessionId, modelStr);
+    log.info("COMBO", `session-round-robin re-pinned session "${sessionId}" → ${modelStr} after fallback`);
+  };
+
   for (let i = 0; i < rotatedModels.length; i++) {
     const modelStr = rotatedModels[i];
     log.info("COMBO", `Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}`);
@@ -535,11 +544,13 @@ export async function handleComboChat({
           }
 
           log.info("COMBO", `Model ${modelStr} succeeded`);
+          repinServedModel(modelStr);
           return result;
         }
 
         if (peeked.outcome === "content") {
           log.info("COMBO", `Model ${modelStr} succeeded${peeked.timedOut ? " (peek deadline; committed)" : ""}`);
+          repinServedModel(modelStr);
           return peeked.response;
         }
 
